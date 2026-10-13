@@ -82,22 +82,28 @@
     const retakeBtn = document.getElementById('retakeBtn');
     const sendBtn = document.getElementById('sendBtn');
 
-    const params = new URLSearchParams(location.search);
-    const openerOrigin = params.get('openerOrigin');
+    const params = new URLSearchParams(location.search);    
+    const parentOrigin = params.get('parentOrigin');
+
 
     let stream = null;
     let photoData = '';
 
-    function allowedOpenerOrigin(value) {
-      try {
-        const u = new URL(value);
-        return u.protocol === 'https:' &&
-          (u.hostname === 'script.google.com' ||
-           u.hostname.endsWith('script.googleusercontent.com'));
+    
+  function allowedParentOrigin(value) {
+    try {
+      const u = new URL(value);
+
+      return u.protocol === 'https:' &&
+        (
+          u.hostname === 'script.google.com' ||
+          u.hostname.endsWith('.script.googleusercontent.com')
+        );
       } catch (e) {
         return false;
       }
-    }
+}
+
 
     async function startCamera() {
       if (!window.isSecureContext ||
@@ -163,28 +169,39 @@
       statusEl.textContent = 'Silakan ambil foto ulang.';
     });
 
-    sendBtn.addEventListener('click', () => {
-      if (!photoData) {
-        statusEl.textContent = 'Ambil foto terlebih dahulu.';
-        return;
-      }
+   
+sendBtn.addEventListener('click', () => {
+  if (!photoData) {
+    statusEl.textContent = 'Ambil foto terlebih dahulu.';
+    return;
+  }
 
-      if (!window.opener || window.opener.closed) {
-        statusEl.textContent =
-          'Halaman aplikasi absensi sudah tertutup. Buka kamera dari aplikasi magang.';
-        return;
-      }
+  if (!allowedParentOrigin(parentOrigin)) {
+    statusEl.textContent =
+      'Alamat aplikasi tidak valid. Buka kamera dari aplikasi magang.';
+    return;
+  }
 
-      if (!allowedOpenerOrigin(openerOrigin)) {
-        statusEl.textContent =
-          'Alamat aplikasi pemanggil tidak valid. Buka kamera dari aplikasi magang.';
-        return;
-      }
+  window.parent.postMessage(
+    {
+      type: 'BNNP_ABSENSI_PHOTO',
+      photoData: photoData
+    },
+    parentOrigin
+  );
 
-      window.opener.postMessage({
-        type: 'BNNP_ABSENSI_PHOTO',
-        photoData: 'data:image/png;base64,...'
-      }, openerOrigin);
+  statusEl.textContent =
+    'Foto dikirim ke aplikasi magang. Silakan tunggu proses absensi.';
+
+  stopCamera();
+  sendBtn.disabled = true;
+  captureBtn.disabled = true;
+  retakeBtn.disabled = true;
+
+  // Jangan gunakan window.close() karena kamera sekarang
+  // berada di dalam iframe pada halaman aplikasi.
+});
+
 
       statusEl.textContent =
         'Foto dikirim ke aplikasi magang. Tunggu proses absensi selesai.';
