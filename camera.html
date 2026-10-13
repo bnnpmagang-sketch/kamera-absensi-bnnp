@@ -183,7 +183,7 @@
 
       window.opener.postMessage({
         type: 'BNNP_ABSENSI_PHOTO',
-        photoData: photoData
+        photoData: 'data:image/png;base64,...'
       }, openerOrigin);
 
       statusEl.textContent =
