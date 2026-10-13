@@ -1,0 +1,210 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kamera Absensi - BNNP Sulsel</title>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: Arial, sans-serif;
+      background: #f3f6fb;
+      color: #172b4d;
+    }
+
+    .card {
+      max-width: 520px;
+      margin: 20px auto;
+      padding: 22px;
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 4px 18px #00000012;
+    }
+
+    h2 { margin-top: 0; color: #12366a; }
+
+    video, canvas, #preview {
+      width: 100%;
+      border-radius: 10px;
+      background: #202428;
+    }
+
+    video { display: block; min-height: 220px; }
+    canvas { display: none; }
+    #preview { display: none; }
+
+    button {
+      width: 100%;
+      padding: 13px;
+      margin-top: 12px;
+      border: 0;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+      color: white;
+    }
+
+    #captureBtn { background: #168653; }
+    #retakeBtn { background: #667085; }
+    #sendBtn { background: #ffb900; color: #172b4d; }
+    #status { line-height: 1.5; overflow-wrap: anywhere; }
+  </style>
+</head>
+
+<body>
+  <div class="card">
+    <h2>Kamera Absensi BNNP Sulsel</h2>
+    <p>Posisikan wajah di tengah kamera, lalu ambil foto.</p>
+
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas"></canvas>
+    <img id="preview" alt="Pratinjau foto absensi">
+
+    <button id="captureBtn" disabled>Ambil Foto</button>
+    <button id="retakeBtn" hidden>Ambil Ulang</button>
+    <button id="sendBtn" hidden>Gunakan Foto Ini</button>
+
+    <p id="status">Meminta izin kamera...</p>
+  </div>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const preview = document.getElementById('preview');
+    const statusEl = document.getElementById('status');
+
+    const captureBtn = document.getElementById('captureBtn');
+    const retakeBtn = document.getElementById('retakeBtn');
+    const sendBtn = document.getElementById('sendBtn');
+
+    const params = new URLSearchParams(location.search);
+    const openerOrigin = params.get('openerOrigin');
+
+    let stream = null;
+    let photoData = '';
+
+    function allowedOpenerOrigin(value) {
+      try {
+        const u = new URL(value);
+        return u.protocol === 'https:' &&
+          (u.hostname === 'script.google.com' ||
+           u.hostname.endsWith('script.googleusercontent.com'));
+      } catch (e) {
+        return false;
+      }
+    }
+
+    async function startCamera() {
+      if (!window.isSecureContext ||
+          !navigator.mediaDevices?.getUserMedia) {
+        statusEl.textContent =
+          'Kamera tidak tersedia. Pastikan halaman dibuka melalui HTTPS.';
+        return;
+      }
+
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user' },
+          audio: false
+        });
+
+        video.srcObject = stream;
+        await video.play();
+
+        captureBtn.disabled = false;
+        statusEl.textContent = 'Kamera aktif. Silakan ambil foto.';
+      } catch (err) {
+        statusEl.textContent =
+          'Kamera gagal dibuka: ' + err.name + ' - ' + err.message;
+      }
+    }
+
+    captureBtn.addEventListener('click', () => {
+      if (!stream || !video.videoWidth) {
+        statusEl.textContent = 'Kamera belum siap. Coba beberapa saat lagi.';
+        return;
+      }
+
+      // Batasi dimensi foto agar data tidak terlalu besar.
+      const scale = Math.min(1, 960 / video.videoWidth);
+      canvas.width = Math.round(video.videoWidth * scale);
+      canvas.height = Math.round(video.videoHeight * scale);
+
+      canvas.getContext('2d').drawImage(
+        video, 0, 0, canvas.width, canvas.height
+      );
+
+      // Backend yang ada menerima foto PNG.
+      photoData = canvas.toDataURL('image/png');
+      preview.src = photoData;
+      preview.style.display = 'block';
+      video.style.display = 'none';
+
+      captureBtn.hidden = true;
+      retakeBtn.hidden = false;
+      sendBtn.hidden = false;
+      statusEl.textContent =
+        'Periksa foto. Jika sudah sesuai, tekan Gunakan Foto Ini.';
+    });
+
+    retakeBtn.addEventListener('click', () => {
+      photoData = '';
+      preview.style.display = 'none';
+      video.style.display = 'block';
+
+      captureBtn.hidden = false;
+      retakeBtn.hidden = true;
+      sendBtn.hidden = true;
+      statusEl.textContent = 'Silakan ambil foto ulang.';
+    });
+
+    sendBtn.addEventListener('click', () => {
+      if (!photoData) {
+        statusEl.textContent = 'Ambil foto terlebih dahulu.';
+        return;
+      }
+
+      if (!window.opener || window.opener.closed) {
+        statusEl.textContent =
+          'Halaman aplikasi absensi sudah tertutup. Buka kamera dari aplikasi magang.';
+        return;
+      }
+
+      if (!allowedOpenerOrigin(openerOrigin)) {
+        statusEl.textContent =
+          'Alamat aplikasi pemanggil tidak valid. Buka kamera dari aplikasi magang.';
+        return;
+      }
+
+      window.opener.postMessage({
+        type: 'BNNP_ABSENSI_PHOTO',
+        photoData: photoData
+      }, openerOrigin);
+
+      statusEl.textContent =
+        'Foto dikirim ke aplikasi magang. Tunggu proses absensi selesai.';
+
+      stopCamera();
+      sendBtn.disabled = true;
+      captureBtn.disabled = true;
+      retakeBtn.disabled = true;
+      window.close();
+    });
+
+    function stopCamera() {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+      }
+    }
+
+    window.addEventListener('pagehide', stopCamera);
+    startCamera();
+  </script>
+</body>
+</html>
