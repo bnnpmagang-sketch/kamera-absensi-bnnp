@@ -99,23 +99,30 @@
     const params = new URLSearchParams(window.location.search);
     const parentOrigin = params.get('parentOrigin');
 
+    console.log('Parent origin:', parentOrigin);
+    console.log('Camera page origin:', window.location.origin);
+    console.log('Parent origin valid:', allowedParentOrigin(parentOrigin));
+
     let stream = null;
     let photoData = '';
     let cameraStarting = false;
 
-    function allowedParentOrigin(value) {
-      try {
-        const u = new URL(value);
+    
+  function allowedParentOrigin(value) {
+    try {
+      const u = new URL(value);
 
-        return u.protocol === 'https:' &&
-          (
-            u.hostname === 'script.google.com' ||
-            u.hostname.endsWith('.script.googleusercontent.com')
-          );
-      } catch (e) {
-        return false;
-      }
+      if (u.protocol !== 'https:') return false;
+
+    return (
+      u.hostname === 'script.google.com' ||
+      u.hostname === 'script.googleusercontent.com' ||
+      u.hostname.endsWith('.script.googleusercontent.com')
+    );
+    } catch (e) {
+    return false;
     }
+  }
 
     async function startCamera() {
       if (cameraStarting || stream) return;
