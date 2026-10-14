@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="id">
 <head>
@@ -10,7 +11,7 @@
 
     body {
       margin: 0;
-      padding: 20px;
+      padding: 16px;
       font-family: Arial, sans-serif;
       background: #f3f6fb;
       color: #172b4d;
@@ -18,8 +19,8 @@
 
     .card {
       max-width: 520px;
-      margin: 20px auto;
-      padding: 22px;
+      margin: 10px auto;
+      padding: 20px;
       background: white;
       border-radius: 16px;
       box-shadow: 0 4px 18px #00000012;
@@ -28,14 +29,19 @@
     h2 { margin-top: 0; color: #12366a; }
 
     video, canvas, #preview {
+      display: block;
       width: 100%;
       border-radius: 10px;
       background: #202428;
     }
 
-    video { display: block; min-height: 220px; }
-    canvas { display: none; }
-    #preview { display: none; }
+    video {
+      min-height: 220px;
+      max-height: 55vh;
+      object-fit: cover;
+    }
+
+    canvas, #preview { display: none; }
 
     button {
       width: 100%;
@@ -48,10 +54,19 @@
       color: white;
     }
 
+    button:disabled {
+      opacity: .6;
+      cursor: not-allowed;
+    }
+
     #captureBtn { background: #168653; }
     #retakeBtn { background: #667085; }
     #sendBtn { background: #ffb900; color: #172b4d; }
-    #status { line-height: 1.5; overflow-wrap: anywhere; }
+
+    #status {
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
   </style>
 </head>
 
@@ -68,7 +83,7 @@
     <button id="retakeBtn" hidden>Ambil Ulang</button>
     <button id="sendBtn" hidden>Gunakan Foto Ini</button>
 
-    <p id="status">Meminta izin kamera...</p>
+    <p id="status">Menyiapkan kamera...</p>
   </div>
 
   <script>
@@ -81,40 +96,55 @@
     const retakeBtn = document.getElementById('retakeBtn');
     const sendBtn = document.getElementById('sendBtn');
 
-    const params = new URLSearchParams(location.search);    
+    const params = new URLSearchParams(window.location.search);
     const parentOrigin = params.get('parentOrigin');
-
 
     let stream = null;
     let photoData = '';
+    let cameraStarting = false;
 
-    
-  function allowedParentOrigin(value) {
-    try {
-      const u = new URL(value);
+    function allowedParentOrigin(value) {
+      try {
+        const u = new URL(value);
 
-      return u.protocol === 'https:' &&
-        (
-          u.hostname === 'script.google.com' ||
-          u.hostname.endsWith('.script.googleusercontent.com')
-        );
+        return u.protocol === 'https:' &&
+          (
+            u.hostname === 'script.google.com' ||
+            u.hostname.endsWith('.script.googleusercontent.com')
+          );
       } catch (e) {
         return false;
       }
-}
-
+    }
 
     async function startCamera() {
-      if (!window.isSecureContext ||
-          !navigator.mediaDevices?.getUserMedia) {
+      if (cameraStarting || stream) return;
+      cameraStarting = true;
+
+      if (!window.isSecureContext) {
         statusEl.textContent =
-          'Kamera tidak tersedia. Pastikan halaman dibuka melalui HTTPS.';
+          'Kamera memerlukan koneksi HTTPS.';
+        cameraStarting = false;
         return;
       }
 
+      if (!navigator.mediaDevices ||
+          !navigator.mediaDevices.getUserMedia) {
+        statusEl.textContent =
+          'Browser tidak menyediakan akses kamera. Periksa izin dan kebijakan iframe.';
+        cameraStarting = false;
+        return;
+      }
+
+      statusEl.textContent = 'Meminta izin kamera...';
+
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user' },
+          video: {
+            facingMode: 'user',
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          },
           audio: false
         });
 
@@ -124,31 +154,62 @@
         captureBtn.disabled = false;
         statusEl.textContent = 'Kamera aktif. Silakan ambil foto.';
       } catch (err) {
-        console.error('Kesalahan kamera:', err.name, err.message);
-        
-        statusEl.textContent =
-        'Kamera gagal dibuka: ' +
-        err.name + ' - ' + err.message;
-    }
+        console.error(
+          'Kesalahan kamera:',
+          err.name,
+          err.message
+        );
+
+        if (err.name === 'NotAllowedError') {
+          statusEl.textContent =
+            'Akses kamera ditolak atau diblokir browser/iframe. Periksa izin kamera dan kebijakan hosting.';
+        } else if (err.name === 'NotFoundError') {
+          statusEl.textContent =
+            'Kamera tidak ditemukan pada perangkat ini.';
+        } else if (err.name === 'NotReadableError') {
+          statusEl.textContent =
+            'Kamera sedang digunakan aplikasi lain atau tidak dapat diakses.';
+        } else {
+          statusEl.textContent =
+            'Kamera gagal dibuka: ' +
+            err.name + ' - ' + err.message;
+        }
+
+        stopCamera();
+      } finally {
+        cameraStarting = false;
+      }
     }
 
-    captureBtn.addEventListener('click', () => {
+    captureBtn.addEventListener('click', function() {
       if (!stream || !video.videoWidth) {
-        statusEl.textContent = 'Kamera belum siap. Coba beberapa saat lagi.';
+        statusEl.textContent =
+          'Kamera belum siap. Tunggu sampai video muncul.';
         return;
       }
 
-      // Batasi dimensi foto agar data tidak terlalu besar.
       const scale = Math.min(1, 960 / video.videoWidth);
+
       canvas.width = Math.round(video.videoWidth * scale);
       canvas.height = Math.round(video.videoHeight * scale);
 
-      canvas.getContext('2d').drawImage(
-        video, 0, 0, canvas.width, canvas.height
+      const context = canvas.getContext('2d');
+
+      if (!context) {
+        statusEl.textContent = 'Gagal memproses gambar.';
+        return;
+      }
+
+      context.drawImage(
+        video,
+        0,
+        0,
+        canvas.width,
+        canvas.height
       );
 
-      // Backend yang ada menerima foto PNG.
       photoData = canvas.toDataURL('image/png');
+
       preview.src = photoData;
       preview.style.display = 'block';
       video.style.display = 'none';
@@ -156,73 +217,67 @@
       captureBtn.hidden = true;
       retakeBtn.hidden = false;
       sendBtn.hidden = false;
+
       statusEl.textContent =
-        'Periksa foto. Jika sudah sesuai, tekan Gunakan Foto Ini.';
+        'Periksa foto, lalu tekan Gunakan Foto Ini.';
     });
 
-    retakeBtn.addEventListener('click', () => {
+    retakeBtn.addEventListener('click', function() {
       photoData = '';
+      preview.removeAttribute('src');
       preview.style.display = 'none';
       video.style.display = 'block';
 
       captureBtn.hidden = false;
       retakeBtn.hidden = true;
       sendBtn.hidden = true;
+
       statusEl.textContent = 'Silakan ambil foto ulang.';
     });
 
-   
-sendBtn.addEventListener('click', () => {
-  if (!photoData) {
-    statusEl.textContent = 'Ambil foto terlebih dahulu.';
-    return;
-  }
+    sendBtn.addEventListener('click', function() {
+      if (!photoData) {
+        statusEl.textContent = 'Ambil foto terlebih dahulu.';
+        return;
+      }
 
-  if (!allowedParentOrigin(parentOrigin)) {
-    statusEl.textContent =
-      'Alamat aplikasi tidak valid. Buka kamera dari aplikasi magang.';
-    return;
-  }
+      if (!allowedParentOrigin(parentOrigin)) {
+        statusEl.textContent =
+          'Alamat aplikasi tidak valid. Buka kamera dari aplikasi magang.';
+        return;
+      }
 
-  window.parent.postMessage(
-    {
-      type: 'BNNP_ABSENSI_PHOTO',
-      photoData: photoData
-    },
-    parentOrigin
-  );
-
-  statusEl.textContent =
-    'Foto dikirim ke aplikasi magang. Silakan tunggu proses absensi.';
-
-  stopCamera();
-  sendBtn.disabled = true;
-  captureBtn.disabled = true;
-  retakeBtn.disabled = true;
-
-  // Jangan gunakan window.close() karena kamera sekarang
-  // berada di dalam iframe pada halaman aplikasi.
-});
-
+      // Kirim foto asli ke halaman utama melalui iframe.
+      window.parent.postMessage({
+        type: 'BNNP_ABSENSI_PHOTO',
+        photoData: photoData
+      }, parentOrigin);
 
       statusEl.textContent =
-        'Foto dikirim ke aplikasi magang. Tunggu proses absensi selesai.';
+        'Foto dikirim. Tunggu proses validasi dan penyimpanan absensi.';
 
       stopCamera();
+
       sendBtn.disabled = true;
       captureBtn.disabled = true;
       retakeBtn.disabled = true;
-      window.close();
     });
 
     function stopCamera() {
       if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+        stream.getTracks().forEach(function(track) {
+          track.stop();
+        });
+
         stream = null;
       }
+
+      video.srcObject = null;
     }
 
     window.addEventListener('pagehide', stopCamera);
+
+    // Mulai kamera saat halaman dimuat.
     startCamera();
   </script>
 </body>
